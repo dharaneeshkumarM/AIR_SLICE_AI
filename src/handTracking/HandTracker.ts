@@ -1,4 +1,4 @@
-// AirSlice AI - MediaPipe Hand Tracker with Robust Fallback & Device Switcher
+// AirSlice AI - Low-Latency Hand Tracking Engine with requestVideoFrameCallback
 import type { HandTrackingState, Landmark, Point2D } from '../types.js';
 import { CoordinateSmoother } from './CoordinateSmoother.js';
 import { GestureRecognizer } from './GestureRecognizer.js';
@@ -22,22 +22,39 @@ export class HandTracker {
   private isProcessingFrame: boolean = false;
   private useMouseFallback: boolean = false;
 
+  // Frame Callback Handles (Dedicated Hand Tracking Loop)
+  private vfcCallbackId: number | null = null;
+  private rafCallbackId: number | null = null;
+
+  // Tracking metrics
+  private trackingFrameCount: number = 0;
+  private trackingFpsTimer: number = 0;
+  private trackingFps: number = 0;
+  private estimatedLatencyMs: number = 0;
+
   private state: HandTrackingState = {
     detected: false,
     confidence: 0,
     landmarks: null,
     fingertip: null,
     rawFingertip: null,
+    lowLatencyTip: null,
     gesture: 'none',
     velocity: 0,
+    predictionOffset: { x: 0, y: 0 },
     isCalibrated: false,
     useMouseFallback: false,
+    trackingFps: 0,
+    cameraFps: 30,
+    cameraWidth: 640,
+    cameraHeight: 360,
+    estimatedLatencyMs: 0,
+    lastDetectionTime: 0,
   };
 
   private mousePosition: Point2D | null = null;
   private lastMouseMoveTime: number = 0;
   private mediaPipeHandsInstance: unknown = null;
-  private animationFrameId: number | null = null;
 
   public setCanvasDimensions(width: number, height: number): void {
     this.canvasWidth = width;
@@ -65,7 +82,6 @@ export class HandTracker {
   public handlePointerMove(clientX: number, clientY: number, rect: DOMRect): void {
     if (!this.useMouseFallback) return;
 
-    // Calculate aspect ratio letterbox/pillarbox offsets
     const canvasAspect = this.canvasWidth / this.canvasHeight;
     const rectAspect = rect.width / rect.height;
     let actualW = rect.width;
@@ -74,11 +90,9 @@ export class HandTracker {
     let offsetY = 0;
 
     if (rectAspect > canvasAspect) {
-      // Pillarboxed (black bars on left/right)
       actualW = rect.height * canvasAspect;
       offsetX = (rect.width - actualW) / 2;
     } else {
-      // Letterboxed (black bars on top/bottom)
       actualH = rect.width / canvasAspect;
       offsetY = (rect.height - actualH) / 2;
     }
@@ -89,14 +103,17 @@ export class HandTracker {
     this.mousePosition = { x, y };
     this.lastMouseMoveTime = performance.now();
 
-    const { point, velocity } = this.smoother.update(this.mousePosition, this.lastMouseMoveTime);
+    const smoothResult = this.smoother.update(this.mousePosition, this.lastMouseMoveTime);
 
     this.state.detected = true;
     this.state.confidence = 1.0;
-    this.state.rawFingertip = { x, y };
-    this.state.fingertip = point;
-    this.state.velocity = velocity;
+    this.state.rawFingertip = smoothResult.rawTip;
+    this.state.fingertip = smoothResult.visualTip;
+    this.state.lowLatencyTip = smoothResult.lowLatencyTip;
+    this.state.velocity = smoothResult.velocity;
+    this.state.predictionOffset = smoothResult.predictionOffset;
     this.state.gesture = 'index';
+    this.state.lastDetectionTime = this.lastMouseMoveTime;
   }
 
   public async waitForMediaPipe(timeoutMs = 8000): Promise<boolean> {
@@ -104,7 +121,7 @@ export class HandTracker {
     const win = window as unknown as { Hands?: unknown };
 
     while (!win.Hands && performance.now() - startTime < timeoutMs) {
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 80));
     }
     return !!win.Hands;
   }
@@ -124,7 +141,6 @@ export class HandTracker {
     };
 
     if (!win.Hands) {
-      console.warn('MediaPipe Hands script not ready on window.');
       return false;
     }
 
@@ -133,9 +149,10 @@ export class HandTracker {
         locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
       });
 
+      // Low latency & high throughput settings
       hands.setOptions({
         maxNumHands: 1,
-        modelComplexity: 1,
+        modelComplexity: 1, // High accuracy single hand model
         minDetectionConfidence: 0.5,
         minTrackingConfidence: 0.5,
       });
@@ -145,10 +162,8 @@ export class HandTracker {
       });
 
       this.mediaPipeHandsInstance = hands;
-      console.info('MediaPipe Hands successfully initialized!');
       return true;
-    } catch (e) {
-      console.error('Failed to initialize MediaPipe Hands:', e);
+    } catch {
       return false;
     }
   }
@@ -156,44 +171,83 @@ export class HandTracker {
   public async start(videoElement: HTMLVideoElement, deviceId?: string): Promise<{ success: boolean; error?: string }> {
     this.videoElement = videoElement;
 
-    // Start Webcam first so video feed activates immediately
-    const camResult = await this.cameraHelper.startCamera(videoElement, deviceId);
+    // Start Webcam with low-latency 640x360@60fps
+    const camResult = await this.cameraHelper.startCamera(videoElement, deviceId, 640, 360);
     if (!camResult.success) {
       this.setMouseFallback(true);
       return { success: false, error: camResult.error };
     }
 
-    // Initialize MediaPipe in parallel / background
+    this.state.cameraWidth = this.cameraHelper.actualWidth;
+    this.state.cameraHeight = this.cameraHelper.actualHeight;
+    this.state.cameraFps = this.cameraHelper.actualFps;
+
+    // Initialize MediaPipe in parallel
     if (!this.mediaPipeHandsInstance) {
-      this.initMediaPipe().then((ready) => {
-        if (!ready) {
-          console.warn('MediaPipe loading delayed; fallback remains available.');
-        }
-      });
+      this.initMediaPipe();
     }
 
     this.isRunning = true;
     this.setMouseFallback(false);
-    this.startDetectionLoop();
+    this.startHandTrackingLoop();
     return { success: true };
   }
 
   public stop(): void {
     this.isRunning = false;
-    if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
-    }
+    this.stopHandTrackingLoop();
     this.cameraHelper.stopCamera();
     this.smoother.reset();
     this.gestureRecognizer.reset();
   }
 
-  private startDetectionLoop(): void {
-    const loop = async () => {
+  private stopHandTrackingLoop(): void {
+    if (this.videoElement) {
+      const videoWithVfc = this.videoElement as HTMLVideoElement & {
+        cancelVideoFrameCallback?: (id: number) => void;
+      };
+      if (this.vfcCallbackId !== null && typeof videoWithVfc.cancelVideoFrameCallback === 'function') {
+        videoWithVfc.cancelVideoFrameCallback(this.vfcCallbackId);
+        this.vfcCallbackId = null;
+      }
+    }
+    if (this.rafCallbackId !== null) {
+      cancelAnimationFrame(this.rafCallbackId);
+      this.rafCallbackId = null;
+    }
+    this.isProcessingFrame = false;
+  }
+
+  /**
+   * Dedicated Hand Tracking Loop using requestVideoFrameCallback for minimum input latency.
+   * Runs independently from the 60fps Game Render Loop.
+   */
+  private startHandTrackingLoop(): void {
+    this.stopHandTrackingLoop();
+    this.trackingFpsTimer = performance.now();
+    this.trackingFrameCount = 0;
+
+    const videoWithVfc = this.videoElement as (HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: (now: number, meta: { mediaTime: number }) => void) => number;
+    }) | null;
+
+    const hasVfc = videoWithVfc && typeof videoWithVfc.requestVideoFrameCallback === 'function';
+
+    const processFrame = async (_frameTimestamp: number) => {
       if (!this.isRunning) return;
 
-      // Lazy init MediaPipe if it just arrived
+      // Track Tracking FPS
+      this.trackingFrameCount++;
+      const now = performance.now();
+      if (now - this.trackingFpsTimer >= 1000) {
+        this.trackingFps = this.trackingFrameCount;
+        this.trackingFrameCount = 0;
+        this.trackingFpsTimer = now;
+        this.state.trackingFps = this.trackingFps;
+        this.state.cameraFps = this.cameraHelper.actualFps;
+      }
+
+      // Lazy init MediaPipe if needed
       if (!this.mediaPipeHandsInstance) {
         const win = window as unknown as { Hands?: unknown };
         if (win.Hands) {
@@ -201,6 +255,7 @@ export class HandTracker {
         }
       }
 
+      // Send raw video element directly without intermediate canvas copies
       if (
         this.mediaPipeHandsInstance &&
         this.videoElement &&
@@ -209,9 +264,12 @@ export class HandTracker {
         !this.useMouseFallback
       ) {
         this.isProcessingFrame = true;
+        const sendStart = performance.now();
         try {
           const mp = this.mediaPipeHandsInstance as { send: (input: { image: HTMLVideoElement }) => Promise<void> };
           await mp.send({ image: this.videoElement });
+          this.estimatedLatencyMs = Math.round(performance.now() - sendStart);
+          this.state.estimatedLatencyMs = this.estimatedLatencyMs;
         } catch {
           // Hand tracking frame skip
         } finally {
@@ -219,16 +277,44 @@ export class HandTracker {
         }
       }
 
-      this.animationFrameId = requestAnimationFrame(loop);
+      // Schedule next frame callback
+      if (this.isRunning) {
+        if (hasVfc && this.videoElement) {
+          this.vfcCallbackId = (this.videoElement as HTMLVideoElement & {
+            requestVideoFrameCallback: (cb: (t: number) => void) => number;
+          }).requestVideoFrameCallback(processFrame);
+        } else {
+          this.rafCallbackId = requestAnimationFrame(processFrame);
+        }
+      }
     };
 
-    this.animationFrameId = requestAnimationFrame(loop);
+    if (hasVfc && this.videoElement) {
+      this.vfcCallbackId = (this.videoElement as HTMLVideoElement & {
+        requestVideoFrameCallback: (cb: (t: number) => void) => number;
+      }).requestVideoFrameCallback(processFrame);
+    } else {
+      this.rafCallbackId = requestAnimationFrame(processFrame);
+    }
   }
 
   private processMediaPipeResults(results: MediaPipeResults): void {
     if (this.useMouseFallback) return;
 
+    const now = performance.now();
+
     if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+      // Confidence drop / Hand missing: Hold last position for 80ms to prevent transient jitter
+      const held = this.smoother.holdOrNull(now);
+      if (held) {
+        this.state.rawFingertip = held.rawTip;
+        this.state.fingertip = held.visualTip;
+        this.state.lowLatencyTip = held.lowLatencyTip;
+        this.state.velocity = held.velocity;
+        this.state.predictionOffset = held.predictionOffset;
+        return;
+      }
+
       this.state.detected = false;
       this.state.confidence = 0;
       this.state.landmarks = null;
@@ -239,9 +325,15 @@ export class HandTracker {
     const rawLandmarks = results.multiHandLandmarks[0];
     const confidence = results.multiHandedness?.[0]?.score || 0.9;
 
+    // Ignore extremely low confidence detections
+    if (confidence < 0.5) {
+      const held = this.smoother.holdOrNull(now);
+      if (held) return;
+    }
+
     // Mirror X coordinates so moving right moves right on screen
     const mirroredLandmarks: Landmark[] = rawLandmarks.map((lm) => ({
-      x: 1 - lm.x, // HORIZONTAL MIRRORING
+      x: 1 - lm.x,
       y: lm.y,
       z: lm.z,
     }));
@@ -253,19 +345,22 @@ export class HandTracker {
       y: indexTip.y * this.canvasHeight,
     };
 
-    // Smooth coordinates
-    const { point: smoothedPx, velocity } = this.smoother.update(rawPx, performance.now());
+    // Update coordinate smoother with dynamic alpha and prediction
+    const smoothResult = this.smoother.update(rawPx, now);
 
-    // Recognize gesture
+    // Temporal gesture confirmation
     const { confirmed: gesture } = this.gestureRecognizer.analyzeFrame(mirroredLandmarks);
 
     this.state.detected = true;
     this.state.confidence = confidence;
     this.state.landmarks = mirroredLandmarks;
-    this.state.rawFingertip = rawPx;
-    this.state.fingertip = smoothedPx;
-    this.state.velocity = velocity;
+    this.state.rawFingertip = smoothResult.rawTip;
+    this.state.fingertip = smoothResult.visualTip;
+    this.state.lowLatencyTip = smoothResult.lowLatencyTip;
+    this.state.velocity = smoothResult.velocity;
+    this.state.predictionOffset = smoothResult.predictionOffset;
     this.state.gesture = gesture;
+    this.state.lastDetectionTime = now;
   }
 
   public getState(): HandTrackingState {

@@ -41,8 +41,13 @@ export class GameManager {
   // Game loop controls
   private animationFrameId: number | null = null;
   private lastFrameTime: number = 0;
-  private fps: number = 60;
-  private previousFingertip: Point2D | null = null;
+  public fps: number = 60;
+  private previousCollisionTip: Point2D | null = null;
+  private hudUpdateTimer: number = 0;
+
+  // Latency Test Mode
+  public isLatencyTestMode: boolean = false;
+  private latencyTarget = { x: 400, y: 360, vx: 420, radius: 45 };
 
   // Callback to update UI
   public onStateChange?: (state: GameState) => void;
@@ -59,6 +64,11 @@ export class GameManager {
 
     this.physics.setDimensions(canvas.width, canvas.height);
     this.tracker.setCanvasDimensions(canvas.width, canvas.height);
+  }
+
+  public setLatencyTestMode(enabled: boolean): void {
+    this.isLatencyTestMode = enabled;
+    this.renderer.isLatencyTestMode = enabled;
   }
 
   public setGameMode(mode: GameMode): void {
@@ -79,6 +89,8 @@ export class GameManager {
     this.difficulty.reset();
     this.renderer.bladeRenderer.clear();
     this.renderer.particleSystem.reset();
+    this.previousCollisionTip = null;
+    this.hudUpdateTimer = 0;
 
     if (this.onStateChange) this.onStateChange('playing');
     this.startLoop();
@@ -238,31 +250,76 @@ export class GameManager {
     // 6. Update Score system combo timer
     this.scoreSystem.update(dt);
 
-    // 7. Blade Movement & Slicing Collision Checks
-    const currTip = handState.fingertip;
-    if (currTip) {
-      this.renderer.bladeRenderer.addPoint(currTip, handState.velocity);
+    // 7. Decoupled Blade Rendering & Low-Latency Collision Checks
+    const visualTip = handState.fingertip;
+    const collisionTip = handState.lowLatencyTip || handState.fingertip;
+
+    if (visualTip) {
+      this.renderer.bladeRenderer.addPoint(visualTip, handState.velocity);
 
       // Play whoosh when moving swiftly
-      if (handState.velocity > 400) {
+      if (handState.velocity > 420) {
         this.audio.playWhoosh(handState.velocity);
       }
+    }
 
-      // Check collisions using continuous segment if previous point exists
-      if (this.previousFingertip) {
-        this.checkCollisions(this.previousFingertip, currTip, handState.velocity);
+    if (collisionTip) {
+      // Collision uses low-latency continuous line-segment path
+      if (this.previousCollisionTip) {
+        this.checkCollisions(this.previousCollisionTip, collisionTip, handState.velocity);
       }
-
-      this.previousFingertip = { ...currTip };
+      this.previousCollisionTip = { ...collisionTip };
     } else {
-      this.previousFingertip = null;
+      this.previousCollisionTip = null;
     }
 
     // 8. Update Renderer (Screen shake + particles)
     this.renderer.update(dt);
 
-    // 9. Update UI HUD
-    if (this.onHUDUpdate) this.onHUDUpdate();
+    // 9. Throttle UI HUD DOM updates to 12.5 Hz (every 80ms) for high rendering performance
+    this.hudUpdateTimer += dt;
+    if (this.hudUpdateTimer >= 0.08) {
+      this.hudUpdateTimer = 0;
+      if (this.onHUDUpdate) this.onHUDUpdate();
+    }
+
+    // 10. Adaptive Performance Controller: scale particles if FPS drops below 45
+    if (this.fps < 45) {
+      this.renderer.particleSystem.setPerformanceScaling(0.5);
+    } else {
+      this.renderer.particleSystem.setPerformanceScaling(1.0);
+    }
+
+    // 11. Latency Test Mode update (if active)
+    if (this.isLatencyTestMode) {
+      this.updateLatencyTarget(dt, visualTip, collisionTip);
+    }
+  }
+
+  private updateLatencyTarget(dt: number, _visualTip: Point2D | null, collisionTip: Point2D | null): void {
+    const target = this.latencyTarget;
+    target.x += target.vx * dt;
+
+    if (target.x > 1280 * 0.85) {
+      target.x = 1280 * 0.85;
+      target.vx = -Math.abs(target.vx);
+    } else if (target.x < 1280 * 0.15) {
+      target.x = 1280 * 0.15;
+      target.vx = Math.abs(target.vx);
+    }
+
+    this.renderer.latencyTarget = { ...target };
+
+    // Check hit
+    if (collisionTip) {
+      const dist = Math.hypot(collisionTip.x - target.x, collisionTip.y - target.y);
+      if (dist < target.radius + 15) {
+        const estLatency = this.tracker.getState().estimatedLatencyMs;
+        this.renderer.particleSystem.addFloatingText(`HIT! ~${estLatency}ms`, target.x, target.y - 30, '#00e5ff', 30);
+        this.audio.playFruitSlice('kiwi');
+        target.vx = -target.vx; // Reverse direction on hit
+      }
+    }
   }
 
   private handleGesture(gesture: GestureType): void {

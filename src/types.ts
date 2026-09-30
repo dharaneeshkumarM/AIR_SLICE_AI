@@ -56,12 +56,35 @@ export interface HandTrackingState {
   detected: boolean;
   confidence: number;
   landmarks: Landmark[] | null;
-  fingertip: Point2D | null;
-  rawFingertip: Point2D | null;
+  fingertip: Point2D | null;        // visualTip: smooth + subtle lead for blade rendering
+  rawFingertip: Point2D | null;     // raw coordinate directly from camera
+  lowLatencyTip: Point2D | null;    // lowLatencyTip: raw + velocity prediction for instantaneous collision
   gesture: GestureType;
   velocity: number;
+  predictionOffset: Point2D;
   isCalibrated: boolean;
   useMouseFallback: boolean;
+  trackingFps: number;
+  cameraFps: number;
+  cameraWidth: number;
+  cameraHeight: number;
+  estimatedLatencyMs: number;
+  lastDetectionTime: number;
+}
+
+export interface LatencyMetrics {
+  cameraResolution: string;
+  cameraFps: number;
+  trackingFps: number;
+  trackingConfidence: number;
+  frameTimeMs: number;
+  renderTimeMs: number;
+  estimatedInputLatencyMs: number;
+  velocity: number;
+  predictionOffset: Point2D;
+  rawPoint: Point2D | null;
+  visualPoint: Point2D | null;
+  lowLatencyPoint: Point2D | null;
 }
 
 export interface GameStats {

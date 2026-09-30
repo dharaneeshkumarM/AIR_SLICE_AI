@@ -51,6 +51,7 @@ export class UIManager {
   public onToggleReducedMotion?: (val: boolean) => void;
   public onSwitchCamera?: (deviceId: string) => Promise<boolean>;
   public onConnectCameraClick?: () => Promise<boolean>;
+  public onToggleLatencyTest?: (val: boolean) => void;
 
   private selectedMode: GameMode = 'classic';
 
@@ -410,6 +411,14 @@ export class UIManager {
             </label>
           </div>
 
+          <div class="setting-row">
+            <label>Latency Test Mode (Target Track):</label>
+            <label class="toggle-switch">
+              <input type="checkbox" id="chk-latency-test">
+              <span class="slider"></span>
+            </label>
+          </div>
+
           <button id="btn-close-settings" class="btn btn-primary" style="margin-top: 24px;">SAVE & CLOSE</button>
         </div>
       </div>
@@ -513,6 +522,12 @@ export class UIManager {
     // Debug Mode Toggle
     document.getElementById('chk-debug-mode')?.addEventListener('change', () => {
       if (this.onToggleDebug) this.onToggleDebug();
+    });
+
+    // Latency Test Mode Toggle
+    document.getElementById('chk-latency-test')?.addEventListener('change', (e) => {
+      const val = (e.target as HTMLInputElement).checked;
+      if (this.onToggleLatencyTest) this.onToggleLatencyTest(val);
     });
 
     // Pause Controls

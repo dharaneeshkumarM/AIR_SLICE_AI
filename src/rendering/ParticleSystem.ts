@@ -35,7 +35,13 @@ interface FloatingText {
 export class ParticleSystem {
   private particles: Particle[] = [];
   private floatingTexts: FloatingText[] = [];
-  private readonly maxParticles = 600; // Performance safeguard
+  private maxParticles = 500; // Performance safeguard
+  private performanceScale: number = 1.0;
+
+  public setPerformanceScaling(scale: number): void {
+    this.performanceScale = Math.max(0.3, Math.min(1.0, scale));
+    this.maxParticles = Math.round(500 * this.performanceScale);
+  }
 
   public reset(): void {
     this.particles = [];

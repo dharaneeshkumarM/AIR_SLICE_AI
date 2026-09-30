@@ -165,6 +165,10 @@ class AirSliceApp {
       this.gameManager.renderer.setReducedMotion(val);
     };
 
+    this.uiManager.onToggleLatencyTest = (val: boolean) => {
+      this.gameManager.setLatencyTestMode(val);
+    };
+
     // 2. GameManager Callbacks
     this.gameManager.onStateChange = (state: GameState) => {
       if (state === 'game-over') {
@@ -215,6 +219,11 @@ class AirSliceApp {
         this.gameManager.renderer.isDebugMode = !this.gameManager.renderer.isDebugMode;
         const chk = document.getElementById('chk-debug-mode') as HTMLInputElement;
         if (chk) chk.checked = this.gameManager.renderer.isDebugMode;
+      } else if (e.key === 'l' || e.key === 'L') {
+        // Toggle latency test mode
+        this.gameManager.setLatencyTestMode(!this.gameManager.isLatencyTestMode);
+        const chk = document.getElementById('chk-latency-test') as HTMLInputElement;
+        if (chk) chk.checked = this.gameManager.isLatencyTestMode;
       } else if (e.key === ' ' || e.key === 'p' || e.key === 'P') {
         // Space / P to toggle pause
         if (this.gameManager.gameState === 'playing') {
