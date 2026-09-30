@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AirSlice AI — Realistic Hand-Gesture Fruit Slicing Game</title>
+    <meta name="description" content="Real-time browser-based hand-gesture controlled fruit slicing game powered by MediaPipe AI and Web Audio API." />
+    <meta name="keywords" content="AirSlice AI, fruit slice, hand tracking, mediapipe, gesture control, web game, arcade" />
+    <meta name="author" content="AirSlice AI Team" />
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Outfit:wght@400;600;800;900&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- MediaPipe Hands & Camera Utils CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app-container">
+      <!-- Hidden webcam feed element -->
+      <video id="webcam-video" playsinline muted></video>
+
+      <!-- Main Game Canvas (1280x720 internal coordinate space, responsive display) -->
+      <canvas id="game-canvas" width="1280" height="720"></canvas>
+
+      <!-- Overlay for Menus, HUD, and Modals -->
+      <div id="ui-overlay"></div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
