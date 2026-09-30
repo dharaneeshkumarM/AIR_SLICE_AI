@@ -49,6 +49,11 @@ export class GameManager {
   public isLatencyTestMode: boolean = false;
   private latencyTarget = { x: 400, y: 360, vx: 420, radius: 45 };
 
+  // Palm Pause/Resume Toggle state
+  private palmLatched: boolean = false;
+  private nonPalmFramesCount: number = 0;
+  private lastPalmToggleTime: number = 0;
+
   // Callback to update UI
   public onStateChange?: (state: GameState) => void;
   public onHUDUpdate?: () => void;
@@ -99,6 +104,7 @@ export class GameManager {
   public pauseGame(): void {
     if (this.gameState === 'playing') {
       this.gameState = 'paused';
+      this.audio.playClick();
       if (this.onStateChange) this.onStateChange('paused');
     }
   }
@@ -106,9 +112,44 @@ export class GameManager {
   public resumeGame(): void {
     if (this.gameState === 'paused') {
       this.gameState = 'playing';
+      this.audio.playClick();
       this.lastFrameTime = performance.now();
       if (this.onStateChange) this.onStateChange('playing');
       this.startLoop();
+    }
+  }
+
+  /**
+   * Handles Open Palm (✋) gesture edge-triggered toggle between Pause and Resume.
+   * Runs in the background loop continuously across all states, so palm works to both
+   * pause during gameplay AND resume while paused.
+   * Debounced with 600ms interval and 4 non-palm frame latch to prevent rapid oscillation.
+   */
+  public handlePalmGesture(gesture: GestureType): void {
+    const now = performance.now();
+
+    if (gesture === 'palm') {
+      this.nonPalmFramesCount = 0;
+
+      // Only toggle if playing or paused, not latched, and cooldown elapsed
+      if (!this.palmLatched && (now - this.lastPalmToggleTime > 600)) {
+        if (this.gameState === 'playing') {
+          this.palmLatched = true;
+          this.lastPalmToggleTime = now;
+          this.pauseGame();
+        } else if (this.gameState === 'paused') {
+          this.palmLatched = true;
+          this.lastPalmToggleTime = now;
+          this.resumeGame();
+        }
+      }
+    } else {
+      this.nonPalmFramesCount++;
+      // Require at least 4 consecutive non-palm frames before unlatching
+      // This absorbs single-frame landmark flicker while user holds their hand up
+      if (this.nonPalmFramesCount >= 4) {
+        this.palmLatched = false;
+      }
     }
   }
 
@@ -323,9 +364,7 @@ export class GameManager {
   }
 
   private handleGesture(gesture: GestureType): void {
-    if (gesture === 'palm' && this.gameState === 'playing') {
-      this.pauseGame();
-    } else if (gesture === 'two-fingers' && this.gameState === 'playing') {
+    if (gesture === 'two-fingers' && this.gameState === 'playing') {
       this.activatePowerUp('double-score');
     } else if (gesture === 'fist' && this.gameState === 'playing') {
       this.activatePowerUp('shield');

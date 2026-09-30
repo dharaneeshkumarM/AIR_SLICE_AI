@@ -125,6 +125,12 @@ class AirSliceApp {
       }
     };
 
+    this.uiManager.onPauseGame = () => {
+      this.audio.playClick();
+      this.gameManager.pauseGame();
+      this.uiManager.setScreen('paused');
+    };
+
     this.uiManager.onResumeGame = () => {
       this.audio.playClick();
       this.gameManager.resumeGame();
@@ -285,6 +291,9 @@ class AirSliceApp {
           this.uiManager.setScreen('playing');
         }
       }
+
+      // Open Palm (✋) gesture to seamlessly toggle Pause and Resume
+      this.gameManager.handlePalmGesture(handState.gesture);
 
       this.pipAnimationFrameId = requestAnimationFrame(pipLoop);
     };

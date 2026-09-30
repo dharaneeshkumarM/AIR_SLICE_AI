@@ -41,6 +41,7 @@ export class UIManager {
   // Callbacks
   public onStartGame?: (mode: GameMode) => void;
   public onStartCalibration?: () => void;
+  public onPauseGame?: () => void;
   public onResumeGame?: () => void;
   public onRestartGame?: () => void;
   public onMainMenu?: () => void;
@@ -257,10 +258,16 @@ export class UIManager {
 
       <!-- 4. PAUSE MODAL -->
       <div id="pause-modal" class="modal-overlay">
-        <div class="modal-card glass-panel">
+        <div class="modal-card glass-panel" style="text-align: center; max-width: 440px;">
           <h2>GAME PAUSED</h2>
-          <p>Gesture detected: <strong>OPEN PALM ✋</strong></p>
-          <div class="modal-buttons">
+          <div style="margin: 16px 0; padding: 14px; background: rgba(0, 229, 255, 0.08); border: 1px solid rgba(0, 229, 255, 0.35); border-radius: 12px; display: flex; align-items: center; justify-content: center; gap: 12px;">
+            <span style="font-size: 32px; filter: drop-shadow(0 0 8px #00e5ff);">✋</span>
+            <div style="text-align: left;">
+              <p style="margin: 0; font-size: 15px; font-weight: 600; color: #fff;">Show OPEN PALM (✋) again</p>
+              <span style="font-size: 12px; color: #00e5ff;">to resume playing anytime</span>
+            </div>
+          </div>
+          <div class="modal-buttons" style="display: flex; gap: 10px; justify-content: center;">
             <button id="btn-pause-resume" class="btn btn-primary">RESUME</button>
             <button id="btn-pause-restart" class="btn btn-secondary">RESTART</button>
             <button id="btn-pause-menu" class="btn btn-secondary">MAIN MENU</button>
@@ -533,6 +540,7 @@ export class UIManager {
     // Pause Controls
     document.getElementById('btn-hud-pause')?.addEventListener('click', () => {
       this.pauseModal.classList.add('active');
+      if (this.onPauseGame) this.onPauseGame();
     });
     document.getElementById('btn-pause-resume')?.addEventListener('click', () => {
       this.pauseModal.classList.remove('active');
@@ -716,9 +724,10 @@ export class UIManager {
       this.pipStatusBadge.className = 'pip-badge red';
     }
 
+    const isPaused = this.pauseModal?.classList.contains('active');
     const gestureIcons: Record<string, string> = {
       index: '☝️ SLICE',
-      palm: '✋ PAUSE',
+      palm: isPaused ? '✋ RESUME' : '✋ PAUSE',
       'two-fingers': '✌️ 2X',
       fist: '✊ SHIELD',
       'thumbs-up': '👍 CONFIRM',
