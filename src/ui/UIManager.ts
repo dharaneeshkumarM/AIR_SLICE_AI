@@ -49,6 +49,8 @@ export class UIManager {
   public onToggleMouseFallback?: (val: boolean) => void;
   public onToggleDebug?: () => boolean;
   public onToggleReducedMotion?: (val: boolean) => void;
+  public onSwitchCamera?: (deviceId: string) => Promise<boolean>;
+  public onConnectCameraClick?: () => Promise<boolean>;
 
   private selectedMode: GameMode = 'classic';
 
@@ -125,6 +127,15 @@ export class UIManager {
               <span id="hand-status-text">Awaiting Hand</span>
             </div>
           </div>
+
+          <div class="camera-controls-bar">
+            <select id="camera-select" class="camera-dropdown" title="Select Webcam Device">
+              <option value="">Default Webcam</option>
+            </select>
+            <button id="btn-connect-cam" class="btn-cam-action" title="Connect / Switch Camera">
+              <span>📷 CONNECT / SWITCH CAMERA</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -133,6 +144,15 @@ export class UIManager {
         <div class="calib-modal glass-panel">
           <h2>CAMERA & GESTURE CALIBRATION</h2>
           <p class="calib-desc">Ensure your hand is clearly visible and within webcam frame.</p>
+
+          <div class="camera-controls-bar" style="margin-bottom: 16px;">
+            <select id="calib-camera-select" class="camera-dropdown" title="Select Webcam Device">
+              <option value="">Default Webcam</option>
+            </select>
+            <button id="btn-calib-connect-cam" class="btn-cam-action">
+              <span>📷 SWITCH CAMERA</span>
+            </button>
+          </div>
 
           <div class="calib-pip-container">
             <video id="calib-video" autoplay playsinline muted></video>
@@ -360,6 +380,13 @@ export class UIManager {
           </div>
 
           <div class="setting-row">
+            <label>Camera Device:</label>
+            <select id="settings-camera-select" class="camera-dropdown">
+              <option value="">Default Webcam</option>
+            </select>
+          </div>
+
+          <div class="setting-row">
             <label>Mouse Blade Fallback:</label>
             <label class="toggle-switch">
               <input type="checkbox" id="chk-mouse-fallback">
@@ -512,6 +539,23 @@ export class UIManager {
         document.getElementById('mute-icon')!.textContent = isMuted ? '🔇' : '🔊';
       }
     });
+
+    // Camera selection event listeners
+    const onCamChange = (e: Event) => {
+      const deviceId = (e.target as HTMLSelectElement).value;
+      if (this.onSwitchCamera) this.onSwitchCamera(deviceId);
+    };
+
+    document.getElementById('camera-select')?.addEventListener('change', onCamChange);
+    document.getElementById('calib-camera-select')?.addEventListener('change', onCamChange);
+    document.getElementById('settings-camera-select')?.addEventListener('change', onCamChange);
+
+    // Connect Camera button clicks
+    const onCamClick = () => {
+      if (this.onConnectCameraClick) this.onConnectCameraClick();
+    };
+    document.getElementById('btn-connect-cam')?.addEventListener('click', onCamClick);
+    document.getElementById('btn-calib-connect-cam')?.addEventListener('click', onCamClick);
 
     // Game Over Buttons
     document.getElementById('btn-go-replay')?.addEventListener('click', () => {
@@ -742,5 +786,36 @@ export class UIManager {
     document.getElementById('go-level')!.textContent = stats.level.toString();
 
     this.setScreen('game-over');
+  }
+
+  public populateCameras(devices: MediaDeviceInfo[], activeDeviceId?: string): void {
+    const selects = [
+      document.getElementById('camera-select') as HTMLSelectElement | null,
+      document.getElementById('calib-camera-select') as HTMLSelectElement | null,
+      document.getElementById('settings-camera-select') as HTMLSelectElement | null,
+    ];
+
+    selects.forEach((sel) => {
+      if (!sel) return;
+      sel.innerHTML = '';
+
+      if (devices.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'Default Webcam';
+        sel.appendChild(opt);
+        return;
+      }
+
+      devices.forEach((dev, idx) => {
+        const opt = document.createElement('option');
+        opt.value = dev.deviceId;
+        opt.textContent = dev.label || `Camera ${idx + 1}`;
+        if (activeDeviceId && dev.deviceId === activeDeviceId) {
+          opt.selected = true;
+        }
+        sel.appendChild(opt);
+      });
+    });
   }
 }

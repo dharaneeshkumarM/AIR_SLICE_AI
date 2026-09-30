@@ -54,13 +54,16 @@ html, body {
   display: block;
 }
 
-/* Hidden video elements for camera stream */
+/* Hidden video element kept in active viewport layout to prevent Chromium frame throttling */
 #webcam-video {
-  position: absolute;
-  top: -9999px;
-  left: -9999px;
-  opacity: 0;
+  position: fixed;
+  bottom: 0;
+  right: 0;
+  width: 2px;
+  height: 2px;
+  opacity: 0.001;
   pointer-events: none;
+  z-index: -1;
 }
 
 /* UI Overlay Layer */
@@ -304,6 +307,56 @@ html, body {
   border-radius: 50px;
   font-size: 13px;
   border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.camera-controls-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+.camera-dropdown {
+  background: rgba(16, 22, 38, 0.95);
+  color: var(--neon-cyan);
+  border: 1px solid var(--border-neon);
+  border-radius: 20px;
+  padding: 8px 16px;
+  font-family: var(--font-main);
+  font-size: 13px;
+  font-weight: 700;
+  outline: none;
+  cursor: pointer;
+  box-shadow: 0 0 10px rgba(0, 229, 255, 0.15);
+  max-width: 340px;
+}
+
+.camera-dropdown:hover {
+  border-color: var(--neon-cyan);
+}
+
+.btn-cam-action {
+  background: linear-gradient(135deg, rgba(0, 229, 255, 0.25), rgba(0, 119, 255, 0.25));
+  border: 1px solid var(--neon-cyan);
+  color: #fff;
+  border-radius: 20px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.btn-cam-action:hover {
+  background: var(--neon-cyan);
+  color: #000;
+  box-shadow: 0 0 16px var(--neon-cyan);
 }
 
 .status-item {

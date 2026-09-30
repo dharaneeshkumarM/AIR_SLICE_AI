@@ -48,23 +48,65 @@ class AirSliceApp {
     this.initCameraAsync();
   }
 
-  private async initCameraAsync(): Promise<void> {
-    const res = await this.tracker.start(this.video);
+  public async initCameraAsync(deviceId?: string): Promise<boolean> {
     const camPill = document.getElementById('cam-status-pill');
     const camText = document.getElementById('cam-status-text');
 
+    if (camText) camText.textContent = 'Connecting Camera...';
+
+    // Check available devices before starting
+    const initialDevices = await this.tracker.getAvailableCameras();
+    let targetDeviceId = deviceId;
+
+    if (!targetDeviceId && initialDevices.length > 0) {
+      // Prefer real physical webcams over DroidCam/OBS if labels are known
+      const physicalCam = initialDevices.find((d) => !/droidcam|obs|virtual/i.test(d.label));
+      if (physicalCam) {
+        targetDeviceId = physicalCam.deviceId;
+      }
+    }
+
+    const res = await this.tracker.start(this.video, targetDeviceId);
+
+    // Refresh devices now that permission is granted (labels are now visible)
+    const devices = await this.tracker.getAvailableCameras();
+    const activeId = this.tracker.cameraHelper.getCurrentDeviceId();
+    this.uiManager.populateCameras(devices, activeId);
+
+    const activeDevice = devices.find((d) => d.deviceId === activeId);
+    const label = activeDevice?.label || 'Webcam';
+
     if (res.success) {
       if (camPill) camPill.className = 'status-item';
-      if (camText) camText.textContent = '✓ Webcam Active';
+      if (camText) camText.textContent = `✓ ${label} Active`;
+
+      // Update calibration video feed if active
+      const calibVideo = document.getElementById('calib-video') as HTMLVideoElement;
+      if (calibVideo && this.video.srcObject) {
+        calibVideo.srcObject = this.video.srcObject;
+      }
+      return true;
     } else {
-      console.info('Webcam not active; enabling mouse blade fallback mode.', res.error);
+      console.warn('Webcam connection issue:', res.error);
       this.tracker.setMouseFallback(true);
       if (camPill) camPill.className = 'status-item';
-      if (camText) camText.textContent = 'Mouse Blade Mode (Active)';
+      if (camText) camText.textContent = 'Camera Blocked/Disconnected — Click "Connect Camera"';
+      return false;
     }
   }
 
   private setupEventHandlers(): void {
+    // 0. Camera Switcher Callbacks
+    this.uiManager.onSwitchCamera = async (deviceId: string) => {
+      this.audio.playClick();
+      return this.initCameraAsync(deviceId);
+    };
+
+    this.uiManager.onConnectCameraClick = async () => {
+      this.audio.playClick();
+      return this.initCameraAsync();
+    };
+
     // 1. UI Callbacks
     this.uiManager.onStartGame = (mode: GameMode) => {
       this.audio.playClick();

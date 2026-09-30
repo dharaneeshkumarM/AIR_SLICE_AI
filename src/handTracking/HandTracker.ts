@@ -1,4 +1,4 @@
-// AirSlice AI - MediaPipe Hand Tracker with Fallback Support
+// AirSlice AI - MediaPipe Hand Tracker with Robust Fallback & Device Switcher
 import type { HandTrackingState, Landmark, Point2D } from '../types.js';
 import { CoordinateSmoother } from './CoordinateSmoother.js';
 import { GestureRecognizer } from './GestureRecognizer.js';
@@ -10,7 +10,7 @@ interface MediaPipeResults {
 }
 
 export class HandTracker {
-  private cameraHelper: CameraHelper = new CameraHelper();
+  public cameraHelper: CameraHelper = new CameraHelper();
   private smoother: CoordinateSmoother = new CoordinateSmoother();
   private gestureRecognizer: GestureRecognizer = new GestureRecognizer();
 
@@ -58,6 +58,10 @@ export class HandTracker {
     return this.useMouseFallback;
   }
 
+  public async getAvailableCameras(): Promise<MediaDeviceInfo[]> {
+    return this.cameraHelper.getAvailableCameras();
+  }
+
   public handlePointerMove(clientX: number, clientY: number, rect: DOMRect): void {
     if (!this.useMouseFallback) return;
 
@@ -95,7 +99,21 @@ export class HandTracker {
     this.state.gesture = 'index';
   }
 
+  public async waitForMediaPipe(timeoutMs = 8000): Promise<boolean> {
+    const startTime = performance.now();
+    const win = window as unknown as { Hands?: unknown };
+
+    while (!win.Hands && performance.now() - startTime < timeoutMs) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return !!win.Hands;
+  }
+
   public async initMediaPipe(): Promise<boolean> {
+    if (this.mediaPipeHandsInstance) return true;
+
+    await this.waitForMediaPipe(6000);
+
     const win = window as unknown as {
       Hands?: new (config: { locateFile: (file: string) => string }) => {
         setOptions: (opts: Record<string, unknown>) => void;
@@ -106,7 +124,7 @@ export class HandTracker {
     };
 
     if (!win.Hands) {
-      console.warn('MediaPipe Hands script not yet available on window.');
+      console.warn('MediaPipe Hands script not ready on window.');
       return false;
     }
 
@@ -118,8 +136,8 @@ export class HandTracker {
       hands.setOptions({
         maxNumHands: 1,
         modelComplexity: 1,
-        minDetectionConfidence: 0.55,
-        minTrackingConfidence: 0.55,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5,
       });
 
       hands.onResults((results: MediaPipeResults) => {
@@ -127,6 +145,7 @@ export class HandTracker {
       });
 
       this.mediaPipeHandsInstance = hands;
+      console.info('MediaPipe Hands successfully initialized!');
       return true;
     } catch (e) {
       console.error('Failed to initialize MediaPipe Hands:', e);
@@ -137,22 +156,24 @@ export class HandTracker {
   public async start(videoElement: HTMLVideoElement, deviceId?: string): Promise<{ success: boolean; error?: string }> {
     this.videoElement = videoElement;
 
-    // First initialize MediaPipe if not ready
-    if (!this.mediaPipeHandsInstance) {
-      const mpReady = await this.initMediaPipe();
-      if (!mpReady) {
-        console.warn('MediaPipe not loaded via CDN yet; fallback enabled.');
-      }
-    }
-
-    // Start Webcam
+    // Start Webcam first so video feed activates immediately
     const camResult = await this.cameraHelper.startCamera(videoElement, deviceId);
     if (!camResult.success) {
       this.setMouseFallback(true);
       return { success: false, error: camResult.error };
     }
 
+    // Initialize MediaPipe in parallel / background
+    if (!this.mediaPipeHandsInstance) {
+      this.initMediaPipe().then((ready) => {
+        if (!ready) {
+          console.warn('MediaPipe loading delayed; fallback remains available.');
+        }
+      });
+    }
+
     this.isRunning = true;
+    this.setMouseFallback(false);
     this.startDetectionLoop();
     return { success: true };
   }
@@ -172,17 +193,26 @@ export class HandTracker {
     const loop = async () => {
       if (!this.isRunning) return;
 
+      // Lazy init MediaPipe if it just arrived
+      if (!this.mediaPipeHandsInstance) {
+        const win = window as unknown as { Hands?: unknown };
+        if (win.Hands) {
+          await this.initMediaPipe();
+        }
+      }
+
       if (
         this.mediaPipeHandsInstance &&
         this.videoElement &&
         this.videoElement.readyState >= 2 &&
-        !this.isProcessingFrame
+        !this.isProcessingFrame &&
+        !this.useMouseFallback
       ) {
         this.isProcessingFrame = true;
         try {
           const mp = this.mediaPipeHandsInstance as { send: (input: { image: HTMLVideoElement }) => Promise<void> };
           await mp.send({ image: this.videoElement });
-        } catch (err) {
+        } catch {
           // Hand tracking frame skip
         } finally {
           this.isProcessingFrame = false;
